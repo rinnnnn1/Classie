@@ -41,6 +41,17 @@
         echo 'USE_MONGO=' . var_export($use_mongo, true) . PHP_EOL;
         echo 'mysqli_loaded=' . (extension_loaded('mysqli') ? 'yes' : 'no') . PHP_EOL;
         echo 'MongoDB_client=' . (class_exists('MongoDB\\Client') ? 'yes' : 'no') . PHP_EOL;
+
+        if (!$use_mongo) {
+            $testConn = @new mysqli($db_host, $db_user, $db_pass, $db_name, $db_port);
+            echo 'mysqli_connect_errno=' . ($testConn->connect_errno ?? 'none') . PHP_EOL;
+            echo 'mysqli_connect_error=' . ($testConn->connect_error ?? 'none') . PHP_EOL;
+            if ($testConn && !$testConn->connect_error) {
+                echo 'mysqli_connection_success=1' . PHP_EOL;
+                $testConn->close();
+            }
+        }
+
         exit();
     }
 
