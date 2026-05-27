@@ -29,6 +29,21 @@
     $mongo_db_name = getenv('MONGO_DB') ?: getenv('MONGO_DATABASE') ?: 'users_db';
     $mongo_time_db_name = getenv('MONGO_TIME_DB') ?: getenv('MONGO_DATABASE_TIME') ?: 'time_db';
 
+    if (isset($_GET['debug_db']) && $_GET['debug_db'] === '1') {
+        header('Content-Type: text/plain; charset=UTF-8');
+        echo 'DEBUG: Database environment values'.PHP_EOL;
+        echo 'DB_DRIVER=' . ($db_driver ?: 'not set') . PHP_EOL;
+        echo 'MYSQLHOST=' . ($db_host ?: 'not set') . PHP_EOL;
+        echo 'MYSQLUSER=' . ($db_user ?: 'not set') . PHP_EOL;
+        echo 'MYSQLPASSWORD=' . (getenv('MYSQLPASSWORD') !== false ? str_repeat('*', 8) : 'not set') . PHP_EOL;
+        echo 'MYSQLPORT=' . ($db_port ?: 'not set') . PHP_EOL;
+        echo 'MYSQLDATABASE=' . ($db_name ?: 'not set') . PHP_EOL;
+        echo 'USE_MONGO=' . var_export($use_mongo, true) . PHP_EOL;
+        echo 'mysqli_loaded=' . (extension_loaded('mysqli') ? 'yes' : 'no') . PHP_EOL;
+        echo 'MongoDB_client=' . (class_exists('MongoDB\\Client') ? 'yes' : 'no') . PHP_EOL;
+        exit();
+    }
+
     if ($use_mongo) {
         if (file_exists(__DIR__ . '/vendor/autoload.php')) {
             require_once __DIR__ . '/vendor/autoload.php';
