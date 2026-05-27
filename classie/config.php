@@ -22,7 +22,7 @@
     $db_user = getenv('DB_USER') ?: getenv('MYSQL_USER') ?: getenv('MYSQLUSER') ?: 'root';
     $db_pass = getenv('DB_PASS') ?: getenv('MYSQL_PASSWORD') ?: getenv('MYSQLPASSWORD') ?: '123';
     $db_port = (int)(getenv('DB_PORT') ?: getenv('MYSQL_PORT') ?: getenv('MYSQLPORT') ?: 3306);
-    $db_name = getenv('DB_NAME') ?: getenv('DB_DATABASE') ?: getenv('MYSQL_DATABASE') ?: 'users_db';
+    $db_name = getenv('DB_NAME') ?: getenv('DB_DATABASE') ?: getenv('MYSQLDATABASE') ?: getenv('MYSQL_DATABASE') ?: 'users_db';
     $time_db_name = getenv('TIME_DB') ?: getenv('DB_NAME_TIME') ?: getenv('DB_DATABASE_TIME') ?: getenv('TIME_DATABASE') ?: 'time_db';
 
     $mongo_uri = getenv('MONGO_URI') ?: getenv('MONGODB_URI') ?: 'mongodb://127.0.0.1:27017';
