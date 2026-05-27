@@ -13,6 +13,69 @@ if (isset($_POST['register-btn'])) {
     exit();
 }
 
+$isJsonRequest = isset($_SERVER['CONTENT_TYPE']) && stripos($_SERVER['CONTENT_TYPE'], 'application/json') !== false;
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $isJsonRequest) {
+    $payload = file_get_contents('php://input');
+    $data = json_decode($payload, true);
+    $email = trim($data['email'] ?? '');
+    $password = $data['password'] ?? '';
+
+    if ($email === '' || $password === '') {
+        http_response_code(400);
+        header('Content-Type: application/json');
+        echo json_encode(['error' => 'Email and password required']);
+        exit();
+    }
+
+    $stmt = $conn->prepare("SELECT id, name, password, role FROM users WHERE email = ?");
+    if ($stmt === false) {
+        http_response_code(500);
+        header('Content-Type: application/json');
+        echo json_encode(['error' => 'Server error: ' . $conn->error]);
+        exit();
+    }
+    $stmt->bind_param('s', $email);
+    $stmt->execute();
+    $result = $stmt->get_result();
+
+    if ($result && $result->num_rows > 0) {
+        $user = $result->fetch_assoc();
+        if (password_verify($password, $user['password'])) {
+            if (!isset($_SESSION['auth']) || !is_array($_SESSION['auth'])) {
+                $_SESSION['auth'] = [];
+            }
+
+            $role_key = strtolower((string)($user['role'] ?? ''));
+            $_SESSION['auth'][$role_key] = [
+                'id' => (int)$user['id'],
+                'name' => $user['name'],
+            ];
+            $_SESSION['user_id'] = (int)$user['id'];
+            $_SESSION['user_name'] = $user['name'];
+            $_SESSION['active_role'] = $role_key;
+
+            if ($user['role'] === 'student') {
+                unset($_SESSION['student_selected_class']);
+            }
+
+            $stmt->close();
+            header('Content-Type: application/json');
+            echo json_encode([
+                'success' => true,
+                'role' => $user['role'],
+                'redirect' => ($user['role'] === 'student' ? 'select_class.php' : ($user['role'] === 'teacher' ? 'teacher.php' : ($user['role'] === 'admin' ? 'admin.php' : 'none'))),
+            ]);
+            exit();
+        }
+    }
+    $stmt->close();
+
+    http_response_code(401);
+    header('Content-Type: application/json');
+    echo json_encode(['error' => 'Invalid email or password']);
+    exit();
+}
+
 // LOGIN
 if (isset($_POST['login-btn'])) {
     $email = $_POST['email'] ?? '';

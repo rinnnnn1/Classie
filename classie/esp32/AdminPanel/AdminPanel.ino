@@ -11,7 +11,8 @@ const char* AP_PASS = "";
 const char* STA_SSID = "GlobeAtHome_D8AF6";
 const char* STA_PASS = "4E5285E1";
 // Your Railway app URL (replace with your actual Railway domain)
-const char* RAILWAY_API = "https://classie-production.up.railway.app/api_admin_teacher.php";
+// Use the production instance you deployed (including path to API entrypoint)
+const char* RAILWAY_API = "https://classie-production-8178.up.railway.app/api_admin_teacher.php";
 
 WebServer server(80);
 
@@ -20,6 +21,9 @@ String admin_session_id = "";
 String admin_name = "";
 int admin_id = 0;
 bool is_logged_in = false;
+// Support separate sessions for teacher and student when proxied through ESP32
+String teacher_session_id = "";
+String student_session_id = "";
 
 // Global JSON buffers for cached data
 String cached_teachers = "";
@@ -49,26 +53,62 @@ const char* root_ca =
   "fA==\n"
   "-----END CERTIFICATE-----\n";
 
+  // URL-encode helper
+  String urlencode(const String &str) {
+    String encoded = "";
+    char c;
+    const char *s = str.c_str();
+    for (size_t i = 0; i < str.length(); ++i) {
+      c = s[i];
+      if (('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || ('0' <= c && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~') {
+        encoded += c;
+      } else if (c == ' ') {
+        encoded += '+';
+      } else {
+        char buf[4];
+        sprintf(buf, "%%%02X", (unsigned char)c);
+        encoded += buf;
+      }
+    }
+    return encoded;
+  }
+
 // Make HTTPS API call
-String makeAPICall(String endpoint, String method, String jsonPayload = "") {
+String last_set_cookie = "";
+
+String makeAPICall(String endpoint, String method, String jsonPayload = "", String cookieValue = "") {
   WiFiClientSecure client;
   client.setCACert(root_ca);
   HTTPClient https;
-  
-  String url = String(RAILWAY_API) + endpoint;
-  
+
+  String url;
+  if (endpoint.startsWith("http://") || endpoint.startsWith("https://")) {
+    url = endpoint;
+  } else {
+    url = String(RAILWAY_API) + endpoint;
+  }
+
   if (https.begin(client, url)) {
+    // Default to JSON but allow callers to set form-encoded payload when needed
     https.addHeader("Content-Type", "application/json");
-    https.addHeader("Cookie", "PHPSESSID=" + admin_session_id);
-    
+    // attach session cookie if provided, otherwise fall back to admin session
+    if (cookieValue.length() > 0) {
+      https.addHeader("Cookie", "PHPSESSID=" + cookieValue);
+    } else if (admin_session_id.length() > 0) {
+      https.addHeader("Cookie", "PHPSESSID=" + admin_session_id);
+    }
+
     int httpCode;
     if (method == "POST") {
       httpCode = https.POST(jsonPayload);
     } else {
       httpCode = https.GET();
     }
-    
-    if (httpCode == HTTP_CODE_OK || httpCode == 200) {
+
+    // capture Set-Cookie header if present
+    last_set_cookie = https.header("Set-Cookie");
+
+    if (httpCode == HTTP_CODE_OK || httpCode == 200 || httpCode == 302) {
       String payload = https.getString();
       https.end();
       return payload;
@@ -77,6 +117,10 @@ String makeAPICall(String endpoint, String method, String jsonPayload = "") {
   }
   return "";
 }
+
+// Forward declarations for helpers used below
+void extractOptionsFromSelect(const String &html, const String &selectId, String &outJson);
+void extractRadioClassOptions(const String &html, String &outJson);
 
 // HTML/CSS/JS for admin panel
 const char ADMIN_PAGE[] PROGMEM = R"rawliteral(
@@ -184,6 +228,12 @@ const char ADMIN_PAGE[] PROGMEM = R"rawliteral(
       <div id="loginSection" class="card">
         <h3>Admin Login</h3>
         <div id="loginError" class="error hidden"></div>
+        <label for="roleSelect">Role</label>
+        <select id="roleSelect">
+          <option value="admin">Admin</option>
+          <option value="teacher">Teacher</option>
+          <option value="student">Student</option>
+        </select>
         <input type="email" id="email" placeholder="Email" required>
         <input type="password" id="password" placeholder="Password" required>
         <button onclick="login()">Login</button>
@@ -238,19 +288,29 @@ const char ADMIN_PAGE[] PROGMEM = R"rawliteral(
       const password = document.getElementById('password').value;
       const loginError = document.getElementById('loginError');
       
+      const role = document.getElementById('roleSelect').value || 'admin';
       const response = await fetch(API_BASE + '?action=login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
-      });
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password, role })
+        });
       
       const data = await response.json();
       if (data.success) {
         isLoggedIn = true;
         document.getElementById('loginSection').classList.add('hidden');
-        document.getElementById('welcomeMsg').innerText = 'Welcome, ' + data.admin_name + '!';
-        loadTeacherData();
-        showSection('teachers');
+        document.getElementById('welcomeMsg').innerText = 'Welcome, ' + (data.admin_name || data.role || '') + '!';
+        // If admin, load admin teacher data; if teacher/student, navigate to backend UI
+        if (role === 'admin') {
+          loadTeacherData();
+          showSection('teachers');
+        } else {
+          // For teacher/student logins, show a simple logged-in state here.
+          document.getElementById('welcomeMsg').innerText = 'Welcome, ' + (data.role || role) + '!';
+          // Hide login UI
+          document.getElementById('loginSection').classList.add('hidden');
+          // You can extend UI to add teacher/student controls later
+        }
       } else {
         loginError.innerText = data.error || 'Login failed';
         loginError.classList.remove('hidden');
@@ -396,12 +456,210 @@ void handleRoot() {
 
 void handleAPI() {
   String action = server.arg("action");
-  
-  if (!is_logged_in && action != "login") {
+  // Allow login and role-specific actions without prior admin session
+  bool isTeacherAction = action.startsWith("teacher_");
+  bool isStudentAction = action.startsWith("student_");
+  if (!is_logged_in && !(action == "login" || isTeacherAction || isStudentAction)) {
     server.send(401, "application/json", "{\"error\":\"Unauthorized\"}");
     return;
   }
 
+  // Handle POST login requests with role
+  if (action == "login" && server.method() == HTTP_POST) {
+    String body = server.arg("plain");
+    // parse simple JSON payload for email, password, role
+    DynamicJsonDocument doc(512);
+    DeserializationError err = deserializeJson(doc, body);
+    String email = "";
+    String password = "";
+    String role = "admin";
+    if (!err) {
+      email = doc["email"].as<String>();
+      password = doc["password"].as<String>();
+      role = doc["role"].as<String>();
+    }
+
+    if (role == "admin") {
+      // admin login via api_admin_teacher.php expects JSON
+      String payload = body;
+      String resp = makeAPICall(String("?action=login"), "POST", payload, "");
+      if (resp != "") {
+        // if success, mark logged in and keep admin session if Set-Cookie provided
+        if (last_set_cookie.length() > 0 && last_set_cookie.indexOf("PHPSESSID=") >= 0) {
+          int p = last_set_cookie.indexOf("PHPSESSID=") + 10;
+          int e = last_set_cookie.indexOf(';', p);
+          String sid = (e > p) ? last_set_cookie.substring(p, e) : last_set_cookie.substring(p);
+          admin_session_id = sid;
+        }
+        // forward backend response
+        server.send(200, "application/json", resp);
+        // set logged-in flag if login succeeded (frontend checks JSON)
+        is_logged_in = true;
+      } else {
+        server.send(401, "application/json", "{\"error\":\"Login failed\"}");
+      }
+      return;
+    }
+
+    // Teacher or Student login: use login_register.php JSON API
+    if (role == "teacher" || role == "student") {
+      String target = String(RAILWAY_API);
+      int idx = target.indexOf("/api_admin_teacher.php");
+      if (idx >= 0) target = target.substring(0, idx);
+      String loginUrl = target + "/login_register.php";
+
+      DynamicJsonDocument payloadDoc(256);
+      payloadDoc["email"] = email;
+      payloadDoc["password"] = password;
+      String payload;
+      serializeJson(payloadDoc, payload);
+
+      String respBody = makeAPICall(loginUrl, "POST", payload, "");
+      if (respBody.length() > 0) {
+        DynamicJsonDocument respDoc(512);
+        DeserializationError err = deserializeJson(respDoc, respBody);
+        if (!err && respDoc["success"] == true) {
+          if (last_set_cookie.length() > 0 && last_set_cookie.indexOf("PHPSESSID=") >= 0) {
+            int p = last_set_cookie.indexOf("PHPSESSID=") + 10;
+            int e = last_set_cookie.indexOf(';', p);
+            String sid = (e > p) ? last_set_cookie.substring(p, e) : last_set_cookie.substring(p);
+            if (role == "teacher") teacher_session_id = sid;
+            if (role == "student") student_session_id = sid;
+          }
+          server.send(200, "application/json", respBody);
+          return;
+        }
+      }
+      server.send(401, "application/json", "{\"error\":\"Invalid credentials\"}");
+      return;
+    }
+  }
+
+  // Teacher-specific endpoints (proxy and parse HTML)
+  if (action == "teacher_get_classes") {
+    if (teacher_session_id.length() == 0) {
+      server.send(401, "application/json", "{\"error\":\"No teacher session\"}");
+      return;
+    }
+    String target = String(RAILWAY_API);
+    int idx = target.indexOf("/api_admin_teacher.php");
+    if (idx >= 0) target = target.substring(0, idx);
+    String url = target + "/teacher.php";
+    String html = makeAPICall(url, "GET", "", teacher_session_id);
+    String classesJson;
+    extractOptionsFromSelect(html, "class-select", classesJson);
+    server.send(200, "application/json", classesJson);
+    return;
+  }
+
+  if (action == "teacher_toggle" && server.method() == HTTP_POST) {
+    if (teacher_session_id.length() == 0) {
+      server.send(401, "application/json", "{\"error\":\"No teacher session\"}");
+      return;
+    }
+    String body = server.arg("plain");
+    DynamicJsonDocument doc(512);
+    DeserializationError err = deserializeJson(doc, body);
+    if (err) {
+      server.send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
+      return;
+    }
+    String classCode = doc["class"].as<String>();
+    int newState = doc["new_state"].as<int>();
+    if (classCode.length() == 0) {
+      server.send(400, "application/json", "{\"error\":\"Missing class\"}");
+      return;
+    }
+    String target = String(RAILWAY_API);
+    int idx = target.indexOf("/api_admin_teacher.php");
+    if (idx >= 0) target = target.substring(0, idx);
+    String url = target + "/teacher.php";
+
+    // build form data
+    String form = "class=" + urlencode(classCode) + "&new_state=" + String(newState) + "&history_days=7&toggle_attendance=1";
+    WiFiClientSecure client;
+    client.setCACert(root_ca);
+    HTTPClient https;
+    String respBody = "";
+    int httpCode = 0;
+    if (https.begin(client, url)) {
+      https.addHeader("Content-Type", "application/x-www-form-urlencoded");
+      https.addHeader("Cookie", "PHPSESSID=" + teacher_session_id);
+      httpCode = https.POST(form);
+      respBody = https.getString();
+      https.end();
+    }
+    if (httpCode > 0) {
+      server.send(200, "application/json", "{\"success\":true}");
+    } else {
+      server.send(500, "application/json", "{\"error\":\"Request failed\"}");
+    }
+    return;
+  }
+
+  // Student-specific endpoints
+  if (action == "student_get_classes") {
+    if (student_session_id.length() == 0) {
+      server.send(401, "application/json", "{\"error\":\"No student session\"}");
+      return;
+    }
+    String target = String(RAILWAY_API);
+    int idx = target.indexOf("/api_admin_teacher.php");
+    if (idx >= 0) target = target.substring(0, idx);
+    String url = target + "/select_class.php";
+    String html = makeAPICall(url, "GET", "", student_session_id);
+    String classesJson;
+    extractRadioClassOptions(html, classesJson);
+    server.send(200, "application/json", classesJson);
+    return;
+  }
+
+  if (action == "student_mark_attendance" && server.method() == HTTP_POST) {
+    if (student_session_id.length() == 0) {
+      server.send(401, "application/json", "{\"error\":\"No student session\"}");
+      return;
+    }
+    String body = server.arg("plain");
+    DynamicJsonDocument doc(512);
+    DeserializationError err = deserializeJson(doc, body);
+    if (err) {
+      server.send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
+      return;
+    }
+    String classCode = doc["class"].as<String>();
+    if (classCode.length() == 0) {
+      server.send(400, "application/json", "{\"error\":\"Missing class\"}");
+      return;
+    }
+    String target = String(RAILWAY_API);
+    int idx = target.indexOf("/api_admin_teacher.php");
+    if (idx >= 0) target = target.substring(0, idx);
+    String url = target + "/attendance.php";
+
+    String form = "class=" + urlencode(classCode);
+    WiFiClientSecure client;
+    client.setCACert(root_ca);
+    HTTPClient https;
+    String respBody = "";
+    int httpCode = 0;
+    if (https.begin(client, url)) {
+      https.addHeader("Content-Type", "application/x-www-form-urlencoded");
+      https.addHeader("X-Requested-With", "XMLHttpRequest");
+      https.addHeader("Cookie", "PHPSESSID=" + student_session_id);
+      httpCode = https.POST(form);
+      if (httpCode > 0) respBody = https.getString();
+      https.end();
+    }
+    if (httpCode > 0) {
+      // forward JSON response from attendance.php
+      server.send(200, "application/json", respBody.length() ? respBody : "{\"success\":true}");
+    } else {
+      server.send(500, "application/json", "{\"error\":\"Request failed\"}");
+    }
+    return;
+  }
+
+  // Default: proxy GET actions to admin API
   String response = makeAPICall(String("?action=") + action, "GET");
   
   if (response != "") {
@@ -409,6 +667,78 @@ void handleAPI() {
   } else {
     server.send(500, "application/json", "{\"error\":\"API call failed\"}");
   }
+}
+
+// Helper: extract <option value="code">name</option> within a select block
+void extractOptionsFromSelect(const String &html, const String &selectId, String &outJson) {
+  outJson = "[]";
+  int s = html.indexOf("<select id=\"" + selectId + "\"");
+  if (s < 0) return;
+  int open = html.indexOf('>', s);
+  if (open < 0) return;
+  int close = html.indexOf("</select>", open);
+  if (close < 0) return;
+  String inner = html.substring(open + 1, close);
+  // find option tags
+  DynamicJsonDocument doc(1024);
+  JsonArray arr = doc.to<JsonArray>();
+  int idx = 0;
+  while (true) {
+    int vpos = inner.indexOf("value=\"");
+    if (vpos < 0) break;
+    int valStart = vpos + 7;
+    int valEnd = inner.indexOf('"', valStart);
+    if (valEnd < 0) break;
+    String val = inner.substring(valStart, valEnd);
+    int tagClose = inner.indexOf('>', valEnd);
+    if (tagClose < 0) break;
+    int optClose = inner.indexOf("</option>", tagClose);
+    if (optClose < 0) break;
+    String text = inner.substring(tagClose + 1, optClose);
+    // trim
+    text.trim();
+    JsonObject obj = arr.createNestedObject();
+    obj["code"] = val;
+    obj["name"] = text;
+    inner = inner.substring(optClose + 9);
+    idx++;
+  }
+  String out;
+  serializeJson(arr, out);
+  outJson = out;
+}
+
+// Helper: extract radio inputs in select_class.php (class options)
+void extractRadioClassOptions(const String &html, String &outJson) {
+  outJson = "[]";
+  DynamicJsonDocument doc(2048);
+  JsonArray arr = doc.to<JsonArray>();
+  int pos = 0;
+  while (true) {
+    int inPos = html.indexOf("input type=\"radio\"", pos);
+    if (inPos < 0) break;
+    int valPos = html.indexOf("value=\"", inPos);
+    if (valPos < 0) break;
+    int vStart = valPos + 7;
+    int vEnd = html.indexOf('"', vStart);
+    if (vEnd < 0) break;
+    String val = html.substring(vStart, vEnd);
+    // find the class-option-main span after this input
+    int mainPos = html.indexOf("class-option-main", vEnd);
+    if (mainPos < 0) break;
+    int tagStart = html.indexOf('>', mainPos);
+    int tagEnd = html.indexOf("</span>", tagStart);
+    if (tagStart < 0 || tagEnd < 0) break;
+    String name = html.substring(tagStart + 1, tagEnd);
+    name.trim();
+    JsonObject obj = arr.createNestedObject();
+    obj["code"] = val;
+    obj["name"] = name;
+    pos = tagEnd + 7;
+  }
+  String out;
+  serializeJson(arr, out);
+  outJson = out;
 }
 
 void setup() {

@@ -12,18 +12,61 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 session_start();
 require_once "config.php";
 
-// Verify admin authentication
+$action = $_GET['action'] ?? '';
+
+// POST: Admin login
+if ($action === 'login') {
+    $data = json_decode(file_get_contents('php://input'), true);
+    $email = trim($data['email'] ?? '');
+    $password = $data['password'] ?? '';
+
+    if ($email === '' || $password === '') {
+        http_response_code(400);
+        echo json_encode(['error' => 'Email and password required']);
+        exit();
+    }
+
+    $stmt = $conn->prepare("SELECT id, name, password, role FROM users WHERE email = ? LIMIT 1");
+    $stmt->bind_param('s', $email);
+    $stmt->execute();
+    $result = $stmt->get_result();
+
+    if ($result->num_rows === 0 || ($row = $result->fetch_assoc()) && $row['role'] !== 'admin') {
+        http_response_code(401);
+        echo json_encode(['error' => 'Invalid email or not an admin']);
+        $stmt->close();
+        exit();
+    }
+
+    if (!password_verify($password, $row['password'])) {
+        http_response_code(401);
+        echo json_encode(['error' => 'Invalid password']);
+        $stmt->close();
+        exit();
+    }
+
+    $_SESSION['auth']['admin'] = ['id' => $row['id'], 'name' => $row['name']];
+    echo json_encode(['success' => true, 'admin_id' => $row['id'], 'admin_name' => $row['name']]);
+    $stmt->close();
+    exit();
+}
+
+// POST: Logout
+if ($action === 'logout') {
+    session_destroy();
+    echo json_encode(['success' => true, 'message' => 'Logged out']);
+    exit();
+}
+
+// Verify admin authentication for all other actions
 $admin_session = $_SESSION['auth']['admin'] ?? null;
 if (!is_array($admin_session) || empty($admin_session['id'])) {
     http_response_code(401);
     echo json_encode(['error' => 'Unauthorized']);
     exit();
 }
-curl -v -X POST "https://your-app.railway.app/api_admin_teacher.php?action=login" \
-  -H "Content-Type: application/json" \
-  -d '{"email":"admin@example.com","password":"yourpassword"}'
+
 $admin_id = (int)$admin_session['id'];
-$action = $_GET['action'] ?? '';
 
 // Verify admin role
 $role_stmt = $conn->prepare("SELECT role FROM users WHERE id = ? LIMIT 1");
