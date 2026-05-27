@@ -35,7 +35,7 @@ function showError($error) {
                 <?= showError($error['login']); ?>
 
                 <p>Log In </p>
-                <input type="text" name="email" placeholder="Username" required autocomplete="off">
+                <input type="text" name="email" placeholder="Email" required autocomplete="off">
                 <input type="password" name="password" placeholder="Password" required autocomplete="new-password">
                 <button class="login-btn" type="submit" name="login-btn">Log In</button>
             </form>

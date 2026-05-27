@@ -14,14 +14,53 @@
 
     // DB credentials — set these as environment variables on Railway.
     // Falls back to XAMPP localhost defaults for local development.
-    $db_host = getenv('DB_HOST') ?: 'localhost';
-    $db_user = getenv('DB_USER') ?: 'root';
-    $db_pass = getenv('DB_PASS') ?: '123';
-    $db_port = (int)(getenv('DB_PORT') ?: 3306);
+    $db_host = getenv('DB_HOST') ?: getenv('MYSQL_HOST') ?: getenv('MYSQLHOST') ?: 'localhost';
+    $db_user = getenv('DB_USER') ?: getenv('MYSQL_USER') ?: getenv('MYSQLUSER') ?: 'root';
+    $db_pass = getenv('DB_PASS') ?: getenv('MYSQL_PASSWORD') ?: getenv('MYSQLPASSWORD') ?: '123';
+    $db_port = (int)(getenv('DB_PORT') ?: getenv('MYSQL_PORT') ?: getenv('MYSQLPORT') ?: 3306);
+    $db_name = getenv('DB_NAME') ?: getenv('DB_DATABASE') ?: getenv('MYSQL_DATABASE') ?: 'users_db';
+    $time_db_name = getenv('TIME_DB') ?: getenv('DB_NAME_TIME') ?: getenv('DB_DATABASE_TIME') ?: getenv('TIME_DATABASE') ?: 'time_db';
 
-    $conn = @new mysqli($db_host, $db_user, $db_pass, 'users_db', $db_port);
+    $conn = @new mysqli($db_host, $db_user, $db_pass, $db_name, $db_port);
     if ($conn->connect_error) {
-        fail_db_connection('users_db');
+        fail_db_connection($db_name);
+    }
+
+    $conn->query("CREATE TABLE IF NOT EXISTS users (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        email VARCHAR(255) NOT NULL UNIQUE,
+        password VARCHAR(255) NOT NULL,
+        role ENUM('student','teacher','admin') NOT NULL DEFAULT 'student',
+        section_id INT NULL,
+        sections VARCHAR(255) NULL,
+        class VARCHAR(255) NULL,
+        assigned_teacher_id INT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )");
+
+    // Optional admin bootstrap via environment variables for new Railway deployments.
+    $admin_email = getenv('ADMIN_EMAIL') ?: '';
+    $admin_password = getenv('ADMIN_PASSWORD') ?: '';
+    $admin_name = getenv('ADMIN_NAME') ?: 'Administrator';
+    if ($admin_email !== '' && $admin_password !== '') {
+        $admin_email = trim($admin_email);
+        $admin_name = trim($admin_name) ?: 'Administrator';
+        $check_admin = $conn->prepare("SELECT id FROM users WHERE role = 'admin' LIMIT 1");
+        if ($check_admin) {
+            $check_admin->execute();
+            $has_admin = $check_admin->get_result()->num_rows > 0;
+            $check_admin->close();
+            if (!$has_admin) {
+                $admin_hash = password_hash($admin_password, PASSWORD_DEFAULT);
+                $create_admin = $conn->prepare("INSERT IGNORE INTO users (name, email, password, role) VALUES (?, ?, ?, 'admin')");
+                if ($create_admin) {
+                    $create_admin->bind_param('sss', $admin_name, $admin_email, $admin_hash);
+                    $create_admin->execute();
+                    $create_admin->close();
+                }
+            }
+        }
     }
 
     // Keep role schema compatible with admin routing.
@@ -50,10 +89,17 @@
 
     // Helper: open a connection to time_db using the same credentials.
     function connect_time_db(): mysqli {
-        global $db_host, $db_user, $db_pass, $db_port;
-        $c = @new mysqli($db_host, $db_user, $db_pass, 'time_db', $db_port);
+        global $db_host, $db_user, $db_pass, $db_port, $db_name, $time_db_name;
+        $c = @new mysqli($db_host, $db_user, $db_pass, $time_db_name, $db_port);
         if ($c->connect_error) {
-            fail_db_connection('time_db');
+            if ($time_db_name !== $db_name) {
+                $c = @new mysqli($db_host, $db_user, $db_pass, $db_name, $db_port);
+                if ($c->connect_error) {
+                    fail_db_connection($time_db_name);
+                }
+            } else {
+                fail_db_connection($time_db_name);
+            }
         }
         return $c;
     }

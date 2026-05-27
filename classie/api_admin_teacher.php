@@ -19,7 +19,9 @@ if (!is_array($admin_session) || empty($admin_session['id'])) {
     echo json_encode(['error' => 'Unauthorized']);
     exit();
 }
-
+curl -v -X POST "https://your-app.railway.app/api_admin_teacher.php?action=login" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@example.com","password":"yourpassword"}'
 $admin_id = (int)$admin_session['id'];
 $action = $_GET['action'] ?? '';
 
