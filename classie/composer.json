@@ -2,6 +2,7 @@
   "name": "classie/classie",
   "description": "Classie attendance web app",
   "require": {
+    "ext-mysqli": "*"
   },
   "autoload": {
     "psr-4": {

@@ -120,7 +120,13 @@
 
     } else {
         // Avoid raw mysqli exceptions from bubbling to the browser.
-        mysqli_report(MYSQLI_REPORT_OFF);
+        if (function_exists('mysqli_report')) {
+            mysqli_report(MYSQLI_REPORT_OFF);
+        }
+
+        if (!extension_loaded('mysqli') || !class_exists('mysqli')) {
+            fail_db_connection('MySQLi extension is not loaded or available.', 'MySQL');
+        }
 
         $conn = @new mysqli($db_host, $db_user, $db_pass, $db_name, $db_port);
         if ($conn->connect_error) {
