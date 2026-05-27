@@ -7,9 +7,11 @@
 // ESP32 Access Point settings
 const char* AP_SSID = "Classiee-Admin";
 const char* AP_PASS = "";
-
+// Local Wi-Fi credentials for internet access
+const char* STA_SSID = "GlobeAtHome_D8AF6";
+const char* STA_PASS = "4E5285E1";
 // Your Railway app URL (replace with your actual Railway domain)
-const char* RAILWAY_API = "https://your-app.railway.app/api_admin_teacher.php";
+const char* RAILWAY_API = "https://classie-production.up.railway.app/api_admin_teacher.php";
 
 WebServer server(80);
 
@@ -410,19 +412,38 @@ void handleAPI() {
 }
 
 void setup() {
-  Serial.begin(115200);
+Serial.begin(115200);
+delay(50);
+Serial.println("BOOT START");
 
-  WiFi.mode(WIFI_AP);
+  WiFi.mode(WIFI_AP_STA);
   bool apStarted = WiFi.softAP(AP_SSID, AP_PASS);
   if (!apStarted) {
     Serial.println("Failed to start AP");
-    return;
+  } else {
+    Serial.print("AP Name: ");
+    Serial.println(AP_SSID);
+    Serial.print("AP IP: ");
+    Serial.println(WiFi.softAPIP());
   }
 
-  Serial.print("AP Name: ");
-  Serial.println(AP_SSID);
-  Serial.print("Open browser to: http://");
-  Serial.println(WiFi.softAPIP());
+  WiFi.begin(STA_SSID, STA_PASS);
+  Serial.print("Connecting to Wi-Fi");
+  int connectAttempts = 0;
+  while (WiFi.status() != WL_CONNECTED && connectAttempts < 30) {
+    delay(500);
+    Serial.print(".");
+    connectAttempts++;
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println();
+    Serial.print("Connected to Wi-Fi. STA IP: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println();
+    Serial.println("Failed to connect to Wi-Fi. Check STA_SSID and STA_PASS.");
+  }
 
   server.on("/", HTTP_GET, handleRoot);
   server.on("/api", HTTP_GET, handleAPI);

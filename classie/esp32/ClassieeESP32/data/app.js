@@ -1,6 +1,6 @@
 (function () {
   var STORAGE_KEY = "classie_backend_base";
-  var defaultBackend = "http://192.168.1.100/classie";
+var defaultBackend = "https://classie-production.up.railway.app";
 
   var backendInput = document.getElementById("backendBase");
   var saveBtn = document.getElementById("saveBackend");
