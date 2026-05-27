@@ -1,0 +1,11 @@
+{
+  "name": "classie/classie",
+  "description": "Classie attendance web app",
+  "require": {
+  },
+  "autoload": {
+    "psr-4": {
+      "": "./"
+    }
+  }
+}
