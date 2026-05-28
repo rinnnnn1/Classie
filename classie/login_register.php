@@ -14,7 +14,19 @@ if (isset($_POST['register-btn'])) {
 }
 
 $isJsonRequest = isset($_SERVER['CONTENT_TYPE']) && stripos($_SERVER['CONTENT_TYPE'], 'application/json') !== false;
+
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS' && isset($_SERVER['HTTP_ORIGIN'])) {
+    header('Access-Control-Allow-Origin: *');
+    header('Access-Control-Allow-Methods: POST, OPTIONS');
+    header('Access-Control-Allow-Headers: Content-Type, X-ESP32-Proxy');
+    exit();
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $isJsonRequest) {
+    if (isset($_SERVER['HTTP_ORIGIN'])) {
+        header('Access-Control-Allow-Origin: *');
+        header('Access-Control-Allow-Headers: Content-Type, X-ESP32-Proxy');
+    }
     $payload = file_get_contents('php://input');
     $data = json_decode($payload, true);
     $email = trim($data['email'] ?? '');
