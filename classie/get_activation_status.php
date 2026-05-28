@@ -46,8 +46,11 @@ if ($time_conn->connect_error) {
 }
 
 $time_conn->query("CREATE TABLE IF NOT EXISTS attendance_activation (class VARCHAR(50) NOT NULL, active_date DATE NOT NULL, is_active TINYINT(1) NOT NULL DEFAULT 0, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, PRIMARY KEY (class, active_date))");
+$time_conn->query("CREATE TABLE IF NOT EXISTS classes_catalog (class_code VARCHAR(50) PRIMARY KEY, class_name VARCHAR(120) NOT NULL, section_name VARCHAR(80) DEFAULT '', is_active TINYINT(1) NOT NULL DEFAULT 1, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)");
+$time_conn->query("ALTER TABLE classes_catalog ADD COLUMN IF NOT EXISTS section_id INT NULL");
+$time_conn->query("ALTER TABLE classes_catalog ADD COLUMN IF NOT EXISTS sections VARCHAR(255) NULL");
 
-$user_stmt = $conn->prepare("SELECT class FROM users WHERE id = ? LIMIT 1");
+$user_stmt = $conn->prepare("SELECT class, section_id FROM users WHERE id = ? LIMIT 1");
 $user_stmt->bind_param('i', $user_id);
 $user_stmt->execute();
 $user_result = $user_stmt->get_result();
@@ -55,9 +58,36 @@ $user_classes = [];
 
 if ($user_result && $user_result->num_rows > 0) {
     $user_row = $user_result->fetch_assoc();
-    $user_classes = array_values(array_filter(array_map('trim', explode(',', $user_row['class'] ?? '')), function ($class_code) {
-        return $class_code !== '';
-    }));
+
+    $resolved_classes = [];
+    $section_id = (int)($user_row['section_id'] ?? 0);
+
+    if ($section_id > 0) {
+        $section_id_str = (string)$section_id;
+        $section_classes_stmt = $time_conn->prepare("SELECT class_code FROM classes_catalog WHERE is_active = 1 AND (section_id = ? OR FIND_IN_SET(?, sections)) ORDER BY class_name ASC");
+        if ($section_classes_stmt) {
+            $section_classes_stmt->bind_param('is', $section_id, $section_id_str);
+            $section_classes_stmt->execute();
+            $section_classes_result = $section_classes_stmt->get_result();
+            while ($section_classes_result && $section_classes_row = $section_classes_result->fetch_assoc()) {
+                $clean_code = strtolower(trim((string)$section_classes_row['class_code']));
+                if ($clean_code !== '') {
+                    $resolved_classes[$clean_code] = true;
+                }
+            }
+            $section_classes_stmt->close();
+        }
+    }
+
+    $legacy_classes = array_map('trim', explode(',', $user_row['class'] ?? ''));
+    foreach ($legacy_classes as $legacy_code) {
+        $clean_code = strtolower($legacy_code);
+        if ($clean_code !== '') {
+            $resolved_classes[$clean_code] = true;
+        }
+    }
+
+    $user_classes = array_keys($resolved_classes);
 }
 $user_stmt->close();
 
