@@ -95,8 +95,6 @@ String makeAPICall(String endpoint, String method, String jsonPayload = "", Stri
   if (https.begin(client, url)) {
     // Default to JSON but allow callers to set form-encoded payload when needed
     https.addHeader("Content-Type", "application/json");
-    // Add ESP32 proxy header to identify requests coming through this device
-    https.addHeader("X-ESP32-Proxy", "true");
     if (cookieValue.length() > 0) {
       if (cookieValue != NO_SESSION_COOKIE) {
         https.addHeader("Cookie", "PHPSESSID=" + cookieValue);
@@ -603,7 +601,6 @@ void handleAPI() {
     int httpCode = 0;
     if (https.begin(client, url)) {
       https.addHeader("Content-Type", "application/x-www-form-urlencoded");
-      https.addHeader("X-ESP32-Proxy", "true");
       https.addHeader("Cookie", "PHPSESSID=" + teacher_session_id);
       httpCode = https.POST(form);
       respBody = https.getString();
@@ -659,7 +656,6 @@ void handleAPI() {
     if (https.begin(client, url)) {
       https.addHeader("Content-Type", "application/x-www-form-urlencoded");
       https.addHeader("X-Requested-With", "XMLHttpRequest");
-      https.addHeader("X-ESP32-Proxy", "true");
       https.addHeader("Cookie", "PHPSESSID=" + student_session_id);
       httpCode = https.POST(form);
       if (httpCode > 0) respBody = https.getString();
