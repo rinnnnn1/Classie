@@ -10,9 +10,9 @@ const char* AP_PASS = "";
 // Local Wi-Fi credentials for internet access
 const char* STA_SSID = "GlobeAtHome_D8AF6";
 const char* STA_PASS = "4E5285E1";
-// Your Railway app URL (replace with your actual Railway domain)
-// Use the production instance you deployed (including path to API entrypoint)
-const char* RAILWAY_API = "https://classie-production-8178.up.railway.app/api_admin_teacher.php";
+// Your Railway app base URL (replace with your actual Railway domain)
+const char* RAILWAY_API_BASE = "https://classie-production-8178.up.railway.app";
+const char* RAILWAY_ADMIN_API = "/api_admin_teacher.php";
 
 WebServer server(80);
 
@@ -21,6 +21,8 @@ String admin_session_id = "";
 String admin_name = "";
 int admin_id = 0;
 bool is_logged_in = false;
+// Special sentinel to explicitly prevent default session forwarding
+const String NO_SESSION_COOKIE = "#NOSESSION#";
 // Support separate sessions for teacher and student when proxied through ESP32
 String teacher_session_id = "";
 String student_session_id = "";
@@ -84,16 +86,21 @@ String makeAPICall(String endpoint, String method, String jsonPayload = "", Stri
   String url;
   if (endpoint.startsWith("http://") || endpoint.startsWith("https://")) {
     url = endpoint;
+  } else if (endpoint.startsWith("/")) {
+    url = String(RAILWAY_API_BASE) + endpoint;
   } else {
-    url = String(RAILWAY_API) + endpoint;
+    url = String(RAILWAY_API_BASE) + "/" + endpoint;
   }
 
   if (https.begin(client, url)) {
     // Default to JSON but allow callers to set form-encoded payload when needed
     https.addHeader("Content-Type", "application/json");
-    // attach session cookie if provided, otherwise fall back to admin session
+    // Add ESP32 proxy header to identify requests coming through this device
+    https.addHeader("X-ESP32-Proxy", "true");
     if (cookieValue.length() > 0) {
-      https.addHeader("Cookie", "PHPSESSID=" + cookieValue);
+      if (cookieValue != NO_SESSION_COOKIE) {
+        https.addHeader("Cookie", "PHPSESSID=" + cookieValue);
+      }
     } else if (admin_session_id.length() > 0) {
       https.addHeader("Cookie", "PHPSESSID=" + admin_session_id);
     }
@@ -129,7 +136,7 @@ const char ADMIN_PAGE[] PROGMEM = R"rawliteral(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Classiee Admin - ESP32</title>
+  <title>Classiee Login - ESP32</title>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -221,14 +228,15 @@ const char ADMIN_PAGE[] PROGMEM = R"rawliteral(
 
     <main class="main-content">
       <header class="top-bar">
-        <h1>Admin Panel</h1>
-        <p id="welcomeMsg">Welcome, Admin!</p>
+        <h1>Classiee Panel</h1>
+        <p id="welcomeMsg">Welcome!</p>
       </header>
 
       <div id="loginSection" class="card">
-        <h3>Admin Login</h3>
+        <h3>Login</h3>
+        <p style="margin:0 0 12px;color:#475569;">Use your Classiee account and select your role.</p>
         <div id="loginError" class="error hidden"></div>
-        <label for="roleSelect">Role</label>
+        <label for="roleSelect">Login as</label>
         <select id="roleSelect">
           <option value="admin">Admin</option>
           <option value="teacher">Teacher</option>
@@ -284,10 +292,18 @@ const char ADMIN_PAGE[] PROGMEM = R"rawliteral(
     let isLoggedIn = false;
 
     async function login() {
-      const email = document.getElementById('email').value;
+      const email = document.getElementById('email').value.trim();
       const password = document.getElementById('password').value;
       const loginError = document.getElementById('loginError');
-      
+      loginError.classList.add('hidden');
+      loginError.innerText = '';
+
+      if (!email || !password) {
+        loginError.innerText = 'Email and password are required.';
+        loginError.classList.remove('hidden');
+        return;
+      }
+
       const role = document.getElementById('roleSelect').value || 'admin';
       const response = await fetch(API_BASE + '?action=login', {
           method: 'POST',
@@ -295,24 +311,32 @@ const char ADMIN_PAGE[] PROGMEM = R"rawliteral(
           body: JSON.stringify({ email, password, role })
         });
       
-      const data = await response.json();
+      let data;
+      try {
+        data = await response.json();
+      } catch (err) {
+        loginError.innerText = 'Server returned invalid response.';
+        loginError.classList.remove('hidden');
+        return;
+      }
+
       if (data.success) {
         isLoggedIn = true;
         document.getElementById('loginSection').classList.add('hidden');
-        document.getElementById('welcomeMsg').innerText = 'Welcome, ' + (data.admin_name || data.role || '') + '!';
-        // If admin, load admin teacher data; if teacher/student, navigate to backend UI
+        document.getElementById('welcomeMsg').innerText = 'Welcome, ' + (data.role || role) + '!';
         if (role === 'admin') {
           loadTeacherData();
           showSection('teachers');
         } else {
-          // For teacher/student logins, show a simple logged-in state here.
-          document.getElementById('welcomeMsg').innerText = 'Welcome, ' + (data.role || role) + '!';
-          // Hide login UI
           document.getElementById('loginSection').classList.add('hidden');
-          // You can extend UI to add teacher/student controls later
+          // Teacher/student login succeeded and session is stored on the ESP32 proxy.
+          const msg = document.createElement('div');
+          msg.className = 'success';
+          msg.innerText = 'Logged in as ' + (data.role || role) + '. You can now use the proxy features.';
+          document.querySelector('.main-content').prepend(msg);
         }
       } else {
-        loginError.innerText = data.error || 'Login failed';
+        loginError.innerText = data.error || 'Login failed.';
         loginError.classList.remove('hidden');
       }
     }
@@ -451,7 +475,9 @@ const char ADMIN_PAGE[] PROGMEM = R"rawliteral(
 )rawliteral";
 
 void handleRoot() {
-  server.send_P(200, "text/html", ADMIN_PAGE);
+  // Redirect to deployed Railway web app instead of serving the local UI
+  server.sendHeader("Location", String(RAILWAY_API_BASE));
+  server.send(302, "text/plain", "");
 }
 
 void handleAPI() {
@@ -482,7 +508,7 @@ void handleAPI() {
     if (role == "admin") {
       // admin login via api_admin_teacher.php expects JSON
       String payload = body;
-      String resp = makeAPICall(String("?action=login"), "POST", payload, "");
+      String resp = makeAPICall(String(RAILWAY_ADMIN_API) + "?action=login", "POST", payload, "");
       if (resp != "") {
         // if success, mark logged in and keep admin session if Set-Cookie provided
         if (last_set_cookie.length() > 0 && last_set_cookie.indexOf("PHPSESSID=") >= 0) {
@@ -503,22 +529,21 @@ void handleAPI() {
 
     // Teacher or Student login: use login_register.php JSON API
     if (role == "teacher" || role == "student") {
-      String target = String(RAILWAY_API);
-      int idx = target.indexOf("/api_admin_teacher.php");
-      if (idx >= 0) target = target.substring(0, idx);
-      String loginUrl = target + "/login_register.php";
+      String loginUrl = String(RAILWAY_API_BASE) + "/login_register.php";
 
       DynamicJsonDocument payloadDoc(256);
       payloadDoc["email"] = email;
       payloadDoc["password"] = password;
+      payloadDoc["role"] = role;
       String payload;
       serializeJson(payloadDoc, payload);
 
-      String respBody = makeAPICall(loginUrl, "POST", payload, "");
+      String respBody = makeAPICall(loginUrl, "POST", payload, NO_SESSION_COOKIE);
       if (respBody.length() > 0) {
         DynamicJsonDocument respDoc(512);
         DeserializationError err = deserializeJson(respDoc, respBody);
-        if (!err && respDoc["success"] == true) {
+        String respRole = respDoc["role"].as<String>();
+        if (!err && respDoc["success"] == true && respRole == role) {
           if (last_set_cookie.length() > 0 && last_set_cookie.indexOf("PHPSESSID=") >= 0) {
             int p = last_set_cookie.indexOf("PHPSESSID=") + 10;
             int e = last_set_cookie.indexOf(';', p);
@@ -541,10 +566,7 @@ void handleAPI() {
       server.send(401, "application/json", "{\"error\":\"No teacher session\"}");
       return;
     }
-    String target = String(RAILWAY_API);
-    int idx = target.indexOf("/api_admin_teacher.php");
-    if (idx >= 0) target = target.substring(0, idx);
-    String url = target + "/teacher.php";
+    String url = String(RAILWAY_API_BASE) + "/teacher.php";
     String html = makeAPICall(url, "GET", "", teacher_session_id);
     String classesJson;
     extractOptionsFromSelect(html, "class-select", classesJson);
@@ -570,10 +592,7 @@ void handleAPI() {
       server.send(400, "application/json", "{\"error\":\"Missing class\"}");
       return;
     }
-    String target = String(RAILWAY_API);
-    int idx = target.indexOf("/api_admin_teacher.php");
-    if (idx >= 0) target = target.substring(0, idx);
-    String url = target + "/teacher.php";
+    String url = String(RAILWAY_API_BASE) + "/teacher.php";
 
     // build form data
     String form = "class=" + urlencode(classCode) + "&new_state=" + String(newState) + "&history_days=7&toggle_attendance=1";
@@ -584,6 +603,7 @@ void handleAPI() {
     int httpCode = 0;
     if (https.begin(client, url)) {
       https.addHeader("Content-Type", "application/x-www-form-urlencoded");
+      https.addHeader("X-ESP32-Proxy", "true");
       https.addHeader("Cookie", "PHPSESSID=" + teacher_session_id);
       httpCode = https.POST(form);
       respBody = https.getString();
@@ -603,10 +623,7 @@ void handleAPI() {
       server.send(401, "application/json", "{\"error\":\"No student session\"}");
       return;
     }
-    String target = String(RAILWAY_API);
-    int idx = target.indexOf("/api_admin_teacher.php");
-    if (idx >= 0) target = target.substring(0, idx);
-    String url = target + "/select_class.php";
+    String url = String(RAILWAY_API_BASE) + "/select_class.php";
     String html = makeAPICall(url, "GET", "", student_session_id);
     String classesJson;
     extractRadioClassOptions(html, classesJson);
@@ -631,10 +648,7 @@ void handleAPI() {
       server.send(400, "application/json", "{\"error\":\"Missing class\"}");
       return;
     }
-    String target = String(RAILWAY_API);
-    int idx = target.indexOf("/api_admin_teacher.php");
-    if (idx >= 0) target = target.substring(0, idx);
-    String url = target + "/attendance.php";
+    String url = String(RAILWAY_API_BASE) + "/attendance.php";
 
     String form = "class=" + urlencode(classCode);
     WiFiClientSecure client;
@@ -645,6 +659,7 @@ void handleAPI() {
     if (https.begin(client, url)) {
       https.addHeader("Content-Type", "application/x-www-form-urlencoded");
       https.addHeader("X-Requested-With", "XMLHttpRequest");
+      https.addHeader("X-ESP32-Proxy", "true");
       https.addHeader("Cookie", "PHPSESSID=" + student_session_id);
       httpCode = https.POST(form);
       if (httpCode > 0) respBody = https.getString();
@@ -660,7 +675,7 @@ void handleAPI() {
   }
 
   // Default: proxy GET actions to admin API
-  String response = makeAPICall(String("?action=") + action, "GET");
+  String response = makeAPICall(String(RAILWAY_ADMIN_API) + "?action=" + action, "GET");
   
   if (response != "") {
     server.send(200, "application/json", response);

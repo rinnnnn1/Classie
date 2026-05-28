@@ -19,6 +19,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $isJsonRequest) {
     $data = json_decode($payload, true);
     $email = trim($data['email'] ?? '');
     $password = $data['password'] ?? '';
+    $requestedRole = trim(strtolower($data['role'] ?? ''));
+
+    // Reject student logins that don't come through ESP32
+    if ($requestedRole === 'student' && !isset($_SERVER['HTTP_X_ESP32_PROXY'])) {
+        http_response_code(401);
+        header('Content-Type: application/json');
+        echo json_encode(['success' => false, 'error' => 'Student login requires ESP32 connection']);
+        exit();
+    }
 
     if ($email === '' || $password === '') {
         http_response_code(400);
@@ -40,6 +49,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $isJsonRequest) {
 
     if ($result && $result->num_rows > 0) {
         $user = $result->fetch_assoc();
+        if ($requestedRole !== '' && $requestedRole !== strtolower($user['role'])) {
+            http_response_code(401);
+            header('Content-Type: application/json');
+            echo json_encode(['error' => 'Invalid role for user']);
+            $stmt->close();
+            exit();
+        }
         if (password_verify($password, $user['password'])) {
             if (!isset($_SESSION['auth']) || !is_array($_SESSION['auth'])) {
                 $_SESSION['auth'] = [];
