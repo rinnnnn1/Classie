@@ -175,6 +175,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_student_section'
     }
 }
 
+    // End semester: delete all students and their attendance records (requires confirmation)
+    $end_error = '';
+    $end_success = '';
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['end_semester_delete_students'])) {
+        $confirm = isset($_POST['confirm_end_semester']) && $_POST['confirm_end_semester'] === '1';
+        if (!$confirm) {
+            $end_error = 'Please confirm the action by checking the box.';
+        } else {
+            $student_ids = [];
+            $ids_result = $conn->query("SELECT id FROM users WHERE role = 'student'");
+            while ($ids_result && $r = $ids_result->fetch_assoc()) {
+                $student_ids[] = (int)$r['id'];
+            }
+
+            if (empty($student_ids)) {
+                $end_error = 'No student records found to delete.';
+            } else {
+                // Delete attendance records for these students from time DB
+                $ids_csv = implode(',', $student_ids);
+                if ($time_conn && !$time_conn->connect_error) {
+                    $time_conn->query("DELETE FROM attendance WHERE user_id IN (" . $time_conn->real_escape_string($ids_csv) . ")");
+                }
+
+                // Delete student user records
+                $del_res = $conn->query("DELETE FROM users WHERE role = 'student'");
+                if ($del_res) {
+                    $end_success = 'All student accounts and related attendance records have been deleted.';
+                } else {
+                    $end_error = 'Unable to delete student records right now.';
+                }
+            }
+        }
+    }
+
 $active_classes = [];
 $classes_result = $time_conn->query("SELECT class_code, class_name, section_name FROM classes_catalog WHERE is_active = 1 ORDER BY class_name ASC");
 while ($classes_result && $class_row = $classes_result->fetch_assoc()) {
@@ -253,6 +287,22 @@ $time_conn->close();
                         <?php } ?>
                     </select>
                     <button type="submit" name="create_student_account" class="teacher-update-btn">Create Student</button>
+                </form>
+            </div>
+
+            <div class="table-card teacher-history-card" style="margin-bottom: 18px;">
+                <h3 class="teacher-section-title">End Semester</h3>
+                <?php if ($end_error !== '') { ?>
+                    <p class="teacher-inline-error"><?php echo htmlspecialchars($end_error); ?></p>
+                <?php } ?>
+                <?php if ($end_success !== '') { ?>
+                    <p class="teacher-inline-success"><?php echo htmlspecialchars($end_success); ?></p>
+                <?php } ?>
+                <form method="post" class="teacher-filters-form" style="width: 100%; justify-content: flex-start;" onsubmit="return confirm('This will permanently delete ALL student accounts and their attendance records. Continue?');">
+                    <label style="display:flex; align-items:center; gap:8px;">
+                        <input type="checkbox" name="confirm_end_semester" value="1"> I confirm deleting all student accounts
+                    </label>
+                    <button type="submit" name="end_semester_delete_students" class="teacher-update-btn" style="background:#b91c1c; border-color:#b91c1c;">End Semester (Delete All Students)</button>
                 </form>
             </div>
 
