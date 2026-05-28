@@ -1,4 +1,9 @@
 <?php
+$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+if ($origin) {
+    ini_set('session.cookie_samesite', 'None');
+    ini_set('session.cookie_secure', '1');
+}
 session_start();
 require_once "config.php";
 
@@ -14,18 +19,21 @@ if (isset($_POST['register-btn'])) {
 }
 
 $isJsonRequest = isset($_SERVER['CONTENT_TYPE']) && stripos($_SERVER['CONTENT_TYPE'], 'application/json') !== false;
+$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
 
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS' && isset($_SERVER['HTTP_ORIGIN'])) {
-    header('Access-Control-Allow-Origin: *');
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS' && $origin) {
+    header('Access-Control-Allow-Origin: ' . $origin);
     header('Access-Control-Allow-Methods: POST, OPTIONS');
     header('Access-Control-Allow-Headers: Content-Type, X-ESP32-Proxy');
+    header('Access-Control-Allow-Credentials: true');
     exit();
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $isJsonRequest) {
-    if (isset($_SERVER['HTTP_ORIGIN'])) {
-        header('Access-Control-Allow-Origin: *');
+    if ($origin) {
+        header('Access-Control-Allow-Origin: ' . $origin);
         header('Access-Control-Allow-Headers: Content-Type, X-ESP32-Proxy');
+        header('Access-Control-Allow-Credentials: true');
     }
     $payload = file_get_contents('php://input');
     $data = json_decode($payload, true);

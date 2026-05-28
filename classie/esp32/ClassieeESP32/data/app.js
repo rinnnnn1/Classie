@@ -60,6 +60,7 @@ var defaultBackend = "https://classie-production-8178.up.railway.app";
 
     fetch(base + '/login_register.php', {
       method: 'POST',
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
         'X-ESP32-Proxy': 'true'
