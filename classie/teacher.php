@@ -170,8 +170,13 @@ if ($selected_class !== '') {
     $activation_stmt->close();
 
     // Include students enrolled in the selected class.
-    $students_query = $conn->prepare("SELECT id, name FROM users WHERE role = 'student' AND FIND_IN_SET(?, class)");
-    $students_query->bind_param('s', $selected_class);
+    // Also include students who are in the class's primary section (backwards-compatible)
+    $section_id_for_class = 0;
+    if ($selected_class_info && !empty($selected_class_info['section_id'])) {
+        $section_id_for_class = (int)$selected_class_info['section_id'];
+    }
+    $students_query = $conn->prepare("SELECT id, name FROM users WHERE role = 'student' AND (FIND_IN_SET(?, class) OR section_id = ?)");
+    $students_query->bind_param('si', $selected_class, $section_id_for_class);
     $students_query->execute();
     $students_result = $students_query->get_result();
     while ($student = $students_result->fetch_assoc()) {
