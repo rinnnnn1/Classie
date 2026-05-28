@@ -131,6 +131,16 @@ if (isset($_POST['login-btn'])) {
         $loginDebug['user_id'] = (int)$user['id'];
         if (password_verify($password, $user['password'])) {
             $loginDebug['password_matches'] = true;
+            
+            // Reject student logins that don't come through ESP32
+            if (strtolower($user['role']) === 'student' && !isset($_SERVER['HTTP_X_ESP32_PROXY'])) {
+                $_SESSION['login_error'] = 'Student login requires ESP32 connection';
+                $_SESSION['active_form'] = 'login';
+                $stmt->close();
+                header("Location: login.php");
+                exit();
+            }
+            
             if (!isset($_SESSION['auth']) || !is_array($_SESSION['auth'])) {
                 $_SESSION['auth'] = [];
             }
